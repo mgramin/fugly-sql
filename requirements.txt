@@ -1,0 +1,3 @@
+mcp
+sqlglot
+psycopg2-binary
