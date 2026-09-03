@@ -1,3 +1,4 @@
 mcp
+fastmcp<2
 sqlglot
 psycopg2-binary
