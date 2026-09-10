@@ -13,15 +13,14 @@ Two client-facing modes:
 """
 
 import difflib
-import json
 import os
 import sys
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import sqlglot
 from sqlglot import expressions as exp
 from sqlglot.optimizer.qualify import qualify
+from openai import OpenAI
 
 try:
     import psycopg2
@@ -29,11 +28,14 @@ except ImportError:
     psycopg2 = None
 
 
-# LLM configuration — any OpenAI-compatible chat-completions endpoint
+# LLM configuration — any OpenAI-compatible chat-completions API
 # (Ollama by default; also OpenAI, vLLM, LM Studio, ...). Override via env.
-LLM_URL = os.environ.get("FUGLY_LLM_URL", "http://127.0.0.1:11434/v1/chat/completions")
+LLM_BASE_URL = os.environ.get("FUGLY_LLM_URL", "http://127.0.0.1:11434/v1")
 LLM_MODEL = os.environ.get("FUGLY_LLM_MODEL", "qwen2.5-coder:1.5b")
-LLM_API_KEY = os.environ.get("FUGLY_LLM_API_KEY", "")  # optional; Ollama ignores it
+# OpenAI's client requires a key; Ollama ignores it, so default to a placeholder.
+LLM_API_KEY = os.environ.get("FUGLY_LLM_API_KEY", "ollama")
+
+client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
 FIX_SYSTEM_PROMPT = (
     "You are an SQL syntax fixer. You are given a single SQL query that may "
@@ -129,31 +131,20 @@ def fix_syntax_with_llm(query: str, schema: dict) -> str:
         f"Schema:\n{schema_prompt(schema)}\n\n"
         f"Query:\n{query}\n\nCorrected SQL:"
     )
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": FIX_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "stream": False,
-        "temperature": 0,
-        "max_tokens": 256,     # SQL is short — cap generation
-        # Ollama extensions (ignored by strict OpenAI servers):
-        "keep_alive": -1,      # keep the model resident — no reload per call
-        "options": {"num_ctx": 1024},  # small context = faster prefill
-    }
-    headers = {"Content-Type": "application/json"}
-    if LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
     try:
-        req = urllib.request.Request(
-            LLM_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": FIX_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=256,  # SQL is short — cap generation
+            timeout=120,
+            # Ollama-specific extensions (ignored by strict OpenAI servers):
+            extra_body={"keep_alive": -1, "options": {"num_ctx": 1024}},
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        fixed = (data["choices"][0]["message"]["content"] or "").strip()
+        fixed = (resp.choices[0].message.content or "").strip()
         # Strip accidental code fences the model may add.
         if fixed.startswith("```"):
             fixed = fixed.strip("`")

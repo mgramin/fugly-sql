@@ -1,2 +1,3 @@
 sqlglot
 psycopg2-binary
+openai
