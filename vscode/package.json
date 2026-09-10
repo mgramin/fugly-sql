@@ -1,0 +1,38 @@
+{
+  "name": "fugly-sql",
+  "displayName": "fugly-sql",
+  "description": "Fix the SQL statement under the cursor via the fugly_sql engine.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fugly-sql.fix",
+        "title": "Fugly: Fix SQL under cursor"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "fugly-sql.fix",
+        "key": "ctrl+alt+f",
+        "when": "editorTextFocus && editorLangId == sql"
+      }
+    ],
+    "configuration": {
+      "title": "fugly-sql",
+      "properties": {
+        "fugly-sql.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000/fix",
+          "description": "URL of a running `fugly_sql.py --serve` engine."
+        }
+      }
+    }
+  }
+}
