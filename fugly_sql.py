@@ -14,6 +14,7 @@ Two client-facing modes:
 
 import difflib
 import json
+import os
 import sys
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,9 +29,11 @@ except ImportError:
     psycopg2 = None
 
 
-# Local model (Ollama) configuration
-OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5-coder:1.5b"
+# LLM configuration — any OpenAI-compatible chat-completions endpoint
+# (Ollama by default; also OpenAI, vLLM, LM Studio, ...). Override via env.
+LLM_URL = os.environ.get("FUGLY_LLM_URL", "http://127.0.0.1:11434/v1/chat/completions")
+LLM_MODEL = os.environ.get("FUGLY_LLM_MODEL", "qwen2.5-coder:1.5b")
+LLM_API_KEY = os.environ.get("FUGLY_LLM_API_KEY", "")  # optional; Ollama ignores it
 
 FIX_SYSTEM_PROMPT = (
     "You are an SQL syntax fixer. You are given a single SQL query that may "
@@ -122,31 +125,35 @@ def fix_syntax_with_llm(query: str, schema: dict) -> str:
     On any error (model unavailable, bad response) the original query is
     returned unchanged so the schema-resolution step can still run.
     """
-    prompt = (
-        f"{FIX_SYSTEM_PROMPT}\n\n"
+    user_prompt = (
         f"Schema:\n{schema_prompt(schema)}\n\n"
         f"Query:\n{query}\n\nCorrected SQL:"
     )
     payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": FIX_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
         "stream": False,
+        "temperature": 0,
+        "max_tokens": 256,     # SQL is short — cap generation
+        # Ollama extensions (ignored by strict OpenAI servers):
         "keep_alive": -1,      # keep the model resident — no reload per call
-        "options": {
-            "temperature": 0,
-            "num_predict": 256,   # SQL is short — cap generation
-            "num_ctx": 1024,      # small context = faster prefill
-        },
+        "options": {"num_ctx": 1024},  # small context = faster prefill
     }
+    headers = {"Content-Type": "application/json"}
+    if LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
     try:
         req = urllib.request.Request(
-            OLLAMA_URL,
+            LLM_URL,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        fixed = (data.get("response") or "").strip()
+        fixed = (data["choices"][0]["message"]["content"] or "").strip()
         # Strip accidental code fences the model may add.
         if fixed.startswith("```"):
             fixed = fixed.strip("`")
